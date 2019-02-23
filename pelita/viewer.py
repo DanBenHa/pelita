@@ -7,17 +7,17 @@ import sys
 import zmq
 
 class AbstractViewer(metaclass=abc.ABCMeta):
-    def set_initial(self, universe, game_state):
+    def set_initial(self, game_state):
         """ This method is called when the first universe is ready.
         """
         pass
 
     @abc.abstractmethod
-    def observe(self, universe, game_state):
+    def observe(self, game_state):
         pass
 
 class ProgressViewer(AbstractViewer):
-    def observe(self, universe, game_state):
+    def observe(self, game_state):
         round_index = game_state["round_index"]
         game_time = game_state["game_time"]
         percentage = int(100.0 * round_index / game_time)
@@ -28,7 +28,7 @@ class ProgressViewer(AbstractViewer):
         string = ("[%s] %3i%% (%i / %i) [%s]" % (
                     bot_sign, percentage,
                     round_index, game_time,
-                    ":".join(str(t.score) for t in universe.teams)))
+                    ":".join(str(score) for score in game_state["team_score"])))
         sys.stdout.write(string + ("\b" * len(string)))
         sys.stdout.flush()
 
@@ -39,7 +39,7 @@ class ProgressViewer(AbstractViewer):
 class AsciiViewer(AbstractViewer):
     """ A viewer that dumps ASCII charts on stdout. """
 
-    def observe(self, universe, game_state):
+    def observe(self, game_state):
         info = (
             "Round: {round!r} Turn: {turn!r} Score {s0}:{s1}\n"
             "Game State: {game_state!r}\n"
@@ -47,10 +47,10 @@ class AsciiViewer(AbstractViewer):
             "{universe}"
         ).format(round=game_state["round_index"],
                  turn=game_state["bot_id"],
-                 s0=universe.teams[0].score,
-                 s1=universe.teams[1].score,
+                 s0=game_state["team_score"][0],
+                 s1=game_state["team_score"][1],
                  game_state=game_state,
-                 universe=universe.compact_str)
+                 universe="TODO ... universe")
 
         print(info)
         winning_team_idx = game_state.get("team_wins")
@@ -81,16 +81,14 @@ class ReplyToViewer(AbstractViewer):
             as_json = json.dumps(message)
             self.sock.send_unicode(as_json, flags=zmq.NOBLOCK)
 
-    def set_initial(self, universe, game_state):
+    def set_initial(self, game_state):
         message = {"__action__": "set_initial",
-                   "__data__": {"universe": universe._to_json_dict(),
-                                "game_state": game_state}}
+                   "__data__": {"game_state": game_state}}
         self._send(message)
 
-    def observe(self, universe, game_state):
+    def observe(self, game_state):
         message = {"__action__": "observe",
-                   "__data__": {"universe": universe._to_json_dict(),
-                                "game_state": game_state}}
+                   "__data__": {"game_state": game_state}}
         self._send(message)
 
 
@@ -109,15 +107,13 @@ class DumpingViewer(AbstractViewer):
         self.stream.write("\x04\n")
         self.stream.flush()
 
-    def set_initial(self, universe, game_state):
+    def set_initial(self, game_state):
         message = {"__action__": "set_initial",
-                   "__data__": {"universe": universe._to_json_dict(),
-                                "game_state": game_state}}
+                   "__data__": {"game_state": game_state}}
         self._send(message)
 
-    def observe(self, universe, game_state):
+    def observe(self, game_state):
         message = {"__action__": "observe",
-                   "__data__": {"universe": universe._to_json_dict(),
-                                "game_state": game_state}}
+                   "__data__": {"game_state": game_state}}
         self._send(message)
 

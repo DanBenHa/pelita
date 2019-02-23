@@ -62,16 +62,16 @@ class GameMaster:
     def __init__(self, layout, teams, number_bots, game_time, noise=True, noiser=None,
                  max_timeouts=5, timeout_length=3, layout_name=None,
                  seed=None):
-        self.universe = datamodel.CTFUniverse.create(layout, number_bots)
+        universe = datamodel.CTFUniverse.create(layout, number_bots)
         self.number_bots = number_bots
 
-        if not len(teams) == len(self.universe.teams):
+        if not len(teams) == len(universe.teams):
             raise ValueError("Number of registered teams does not match the universe.")
         self.player_teams = teams
 
         if noiser is None:
             noiser = ManhattanNoiser
-        self.noiser = noiser(self.universe, seed=seed) if noise else None
+        self.noiser = noiser(universe, seed=seed) if noise else None
 
         self.viewers = []
 
@@ -90,6 +90,24 @@ class GameMaster:
             #: game uuid
             "game_uuid": str(uuid.uuid4()),
 
+            #: walls
+            "walls": [pos for pos, is_wall in universe.maze.items() if is_wall],
+
+            #: score
+            "team_score": [t.score for t in universe.teams],
+
+            #: food
+            "food": list(universe.food),
+
+            #: bot_positions
+            "bot_positions": [b.current_pos for b in universe.bots],
+
+            #: initial_positions
+            "initial_positions": [b.initial_pos for b in universe.bots],
+
+            #: homezones
+            "team_homezone": [t.zone for t in universe.teams],
+
             #: holds a list of bot movements for this step
             #: [{"bot_id": bot_id, "old_pos": old_pos, "new_pos": new_pos}]
             "bot_moved": [],
@@ -103,7 +121,7 @@ class GameMaster:
             "bot_destroyed": [],
 
             #: [timeouts_team_0, timeouts_team_1]
-            "timeout_teams": [0] * len(self.universe.teams),
+            "timeout_teams": [0] * len(universe.teams),
 
             #: bot.index of the bot which is about to move or None
             "bot_id": None,
@@ -118,13 +136,13 @@ class GameMaster:
             "finished": False,
 
             #: [team_name_0, team_name_1]
-            "team_name": [""] * len(self.universe.teams),
+            "team_name": [""] * len(universe.teams),
 
             #: [running_time_team_0, running_time_team_1]
-            "team_time": [0] * len(self.universe.teams),
+            "team_time": [0] * len(universe.teams),
 
             #: [times_killed_team_0, times_killed_team_1]
-            "times_killed": [0] * len(self.universe.teams),
+            "times_killed": [0] * len(universe.teams),
 
             #: team.index of the team winning or None
             "team_wins": None,
@@ -136,16 +154,16 @@ class GameMaster:
             "bot_error": {},
 
             #: [reason_team_0, reason_team_1] for a team which was disqualified
-            "teams_disqualified": [None] * len(self.universe.teams),
+            "teams_disqualified": [None] * len(universe.teams),
 
             #: maximum number of rounds
             "game_time": game_time,
 
             #: [food_eaten_team_0, food_eaten_team_1]
-            "food_count": [0] * len(self.universe.teams),
+            "food_count": [0] * len(universe.teams),
 
             #: [food_to_eat_team_0, food_to_eat_team_1]
-            "food_to_eat": [len(self.universe.enemy_food(team.index)) for team in self.universe.teams],
+            "food_to_eat": [len(universe.enemy_food(team.index)) for team in universe.teams],
 
             #: time until timeout
             "timeout_length": timeout_length,
@@ -194,21 +212,20 @@ class GameMaster:
         """ Call the 'observe' method on all registered viewers.
         """
         for viewer in self.viewers:
-            viewer.observe(self.universe,
-                           self.game_state)
+            viewer.observe(self.game_state)
 
     def set_initial(self):
         """ This method needs to be called before a game is started.
         It notifies the PlayerTeams and the Viewers of the initial
         universes and tells the PlayerTeams what team_id they have.
         """
-        if len(self.player_teams) != len(self.universe.teams):
+        if len(self.player_teams) != len(self.game_state['team_score']):
             raise IndexError(
                 "Universe uses %i teams, but %i are registered."
-                % (len(self.player_teams), len(self.universe.teams)))
+                % (len(self.player_teams), len(self.game_state['team_score'])))
 
         for viewer in self.viewers:
-            viewer.set_initial(self.universe, self.game_state)
+            viewer.set_initial(self.game_state)
 
         for team_id, team in enumerate(self.player_teams):
             # What follows is a small hack:
@@ -220,7 +237,7 @@ class GameMaster:
             team_seed = self.rnd.randint(0, sys.maxsize)
             team_state = dict({"seed": team_seed}, **self.game_state)
             try:
-                team_name = team.set_initial(team_id, self.universe, team_state)
+                team_name = team.set_initial(team_id, team_state)
                 self.game_state["team_name"][team_id] = team_name
             except PlayerTimeout:
                 pass
@@ -280,10 +297,10 @@ class GameMaster:
         if self.check_finished():
             raise GameFinished()
 
-        for bot in self.universe.bots:
+        for bot_index, pos in enumerate(self.game_state['bot_positions']):
             start_time = time.monotonic()
 
-            self._play_bot(bot)
+            self._play_bot(bot_index)
 
             end_time = time.monotonic()
             self.game_state["running_time"] += (end_time - start_time)
@@ -304,24 +321,29 @@ class GameMaster:
         if self.game_state.get("finished"):
             self.update_viewers()
 
-    def _play_bot(self, bot):
-        self.game_state["bot_id"] = bot.index
+    def _play_bot(self, bot_index):
+        self.game_state["bot_id"] = bot_index
         self.game_state["bot_moved"] = []
         self.game_state["food_eaten"] = []
         self.game_state["bot_destroyed"] = []
         self.game_state["bot_timeout"] = None
         self.game_state["bot_error"] = {}
 
-        player_team = self.player_teams[bot.team_index]
+        team_index = bot_index % 2
+
+        player_team = self.player_teams[team_index]
         try:
             if self.noiser:
-                universe = self.noiser.uniform_noise(self.universe, bot.index)
+                # TODO no noise for now
+                pass
+                #universe = self.noiser.uniform_noise(self.universe, bot.index)
             else:
-                universe = self.universe
+                pass
+                #universe = self.universe
 
             team_time_begin = time.monotonic()
 
-            player_state = player_team.get_move(bot.index, universe, self.game_state)
+            player_state = player_team.get_move(bot_index, self.game_state)
             try:
                 # player_state may be None, if RemoteTeamPlayer could not
                 # properly convert it
@@ -330,37 +352,37 @@ class GameMaster:
             except AttributeError:
                 raise datamodel.IllegalMoveException("Bad data returned by Player.")
 
-            self.game_state["bot_talk"][bot.index] = bot_talk
+            self.game_state["bot_talk"][bot_index] = bot_talk
 
             team_time_end = time.monotonic()
             team_time_needed = team_time_end - team_time_begin
-            self.game_state["team_time"][bot.team_index] += team_time_needed
+            self.game_state["team_time"][team_index] += team_time_needed
 
-            move_state = self.universe.move_bot(bot.index, move)
+            move_state = move_bot(self.game_state, bot_index, move)
             for k, v in move_state.items():
                 self.game_state[k] += v
 
         except (datamodel.IllegalMoveException, PlayerTimeout) as e:
             # after max_timeouts timeouts, you lose
-            self.game_state["timeout_teams"][bot.team_index] += 1
+            self.game_state["timeout_teams"][team_index] += 1
             if isinstance(e, datamodel.IllegalMoveException):
-                self.game_state["bot_error"] = {bot.index: "illegal_move"}
+                self.game_state["bot_error"] = {bot_index: "illegal_move"}
             else:
-                self.game_state["bot_error"] = {bot.index: "timeout"}
+                self.game_state["bot_error"] = {bot_index: "timeout"}
 
-            if self.game_state["timeout_teams"][bot.team_index] == self.game_state["max_timeouts"]:
-                self.game_state["teams_disqualified"][bot.team_index] = "timeout"
+            if self.game_state["timeout_teams"][team_index] == self.game_state["max_timeouts"]:
+                self.game_state["teams_disqualified"][team_index] = "timeout"
             else:
 
-                moves = list(self.universe.legal_moves_or_stop(bot.current_pos).keys())
+                moves = legal_moves_or_stop(self.game_state, bot_index)
 
                 move = self.rnd.choice(moves)
-                move_state = self.universe.move_bot(bot.index, move)
+                move_state = move_bot(self.game_state, bot_index, move)
                 for k, v in move_state.items():
                     self.game_state[k] += v
 
         except PlayerDisconnected:
-            self.game_state["teams_disqualified"][bot.team_index] = "disconnected"
+            self.game_state["teams_disqualified"][team_index] = "disconnected"
 
         for food_eaten in self.game_state["food_eaten"]:
             team_id = self.universe.bots[food_eaten["bot_id"]].team_index
@@ -410,15 +432,109 @@ class GameMaster:
                 self.game_state["finished"] = True
 
         if self.game_state["finished"]:
-            if self.universe.teams[0].score > self.universe.teams[1].score:
+            if self.game_state["team_score"][0] > self.game_state["team_score"][1]:
                 self.game_state["team_wins"] = 0
-            elif self.universe.teams[0].score < self.universe.teams[1].score:
+            elif self.game_state["team_score"][0] < self.game_state["team_score"][1]:
                 self.game_state["team_wins"] = 1
             else:
                 self.game_state["game_draw"] = True
             return True
 
         return self.game_state["finished"]
+
+def move_bot(game_state, bot_index, move):
+    """ Move a bot in certain direction.
+
+    Parameters
+    ----------
+    bot_id : int
+        index of the bot
+    move : tuple of (int, int)
+        direction to move in
+
+    Returns
+    -------
+    game_state : dict
+        the current game_state
+
+    Raises
+    ------
+    IllegalMoveException
+        if the move is invalid or impossible
+
+    """
+    # check legality of the move
+
+    return_state = {}
+
+    current_pos = game_state["bot_positions"][bot_index]
+    new_pos = (current_pos[0] + move[0], current_pos[1] + move[1])
+
+    if new_pos not in legal_positions(game_state, bot_index):
+        raise datamodel.IllegalMoveException(
+            'Illegal move from bot_id %r: %s' % (bot_index, move))
+    old_pos = current_pos
+
+    return_state["bot_moved"] = [{"bot_id": bot_index, "old_pos": old_pos, "new_pos": new_pos}]
+
+    return return_state
+
+    team = self.teams[bot.team_index]
+    # check for food being eaten
+    game_state["food_eaten"] = []
+    if bot.current_pos in self.food_list and not bot.in_own_zone:
+        self.food.remove(bot.current_pos)
+
+        game_state["food_eaten"] += [{"food_pos": bot.current_pos, "bot_id": bot_id}]
+
+    # check for destruction
+    game_state["bot_destroyed"] = []
+    for enemy in self.enemy_bots(bot.team_index):
+        if enemy.current_pos == bot.current_pos:
+            if enemy.is_destroyer and bot.is_harvester:
+                destroyer = enemy.index
+                harvester = bot.index
+            elif bot.is_destroyer and enemy.is_harvester:
+                destroyer = bot.index
+                harvester = enemy.index
+            else:
+                continue
+
+            # move on, if harvester is already destroyed
+            if any(bot_destr["bot_id"]==harvester for bot_destr in game_state["bot_destroyed"]):
+                continue
+
+            # otherwise mark for destruction
+            game_state["bot_destroyed"] += [{'bot_id': harvester, 'destroyed_by': destroyer}]
+
+    # reset bots
+    for destroyed in game_state["bot_destroyed"]:
+        old_pos = bot.current_pos
+        self.bots[destroyed["bot_id"]]._to_initial()
+        new_pos = bot.current_pos
+        game_state["bot_moved"] += [{"bot_id": bot_id, "old_pos": old_pos, "new_pos": new_pos}]
+
+    for food_eaten in game_state["food_eaten"]:
+        self.teams[self.bots[food_eaten["bot_id"]].team_index].score += 1
+
+    for bot_destroyed in game_state["bot_destroyed"]:
+        self.teams[self.bots[bot_destroyed["destroyed_by"]].team_index].score += self.KILLPOINTS
+
+    return return_state
+
+def legal_moves_or_stop(game_state, bot_index):
+    return [(0, 0)]
+
+def legal_moves(game_state, bot_index):
+    return []
+
+def legal_positions(game_state, bot_index):
+    bot_position = game_state["bot_positions"][bot_index]
+    neighbors = [(bot_position[0] + x, bot_position[1] + y)
+                 for x in [-1, 0, 1]
+                 for y in [-1, 0, 1]
+                ]
+    return [neighbor for neighbor in neighbors if not neighbor in game_state["walls"]]
 
 class UniverseNoiser(metaclass=abc.ABCMeta):
     """Abstract BaseClass to make bot positions noisy.

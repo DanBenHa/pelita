@@ -36,7 +36,7 @@ class Team(AbstractTeam):
 
         self._team_move = team_move
 
-    def set_initial(self, team_id, universe, game_state):
+    def set_initial(self, team_id, game_state):
         """ Sets the bot indices for the team and returns the team name.
         Currently, we do not call _set_initial on the user side.
 
@@ -44,8 +44,6 @@ class Team(AbstractTeam):
         ----------
         team_id : int
             The id of the team
-        universe : Universe
-            The initial universe
         game_state : dict
             The initial game state
 
@@ -61,10 +59,10 @@ class Team(AbstractTeam):
         self._team_game = [None, None]
 
         #: Storage for the random generator
-        self._bot_random = [None] * len(universe.bots)
+        self._bot_random = [None] * len(game_state["bot_positions"])
 
         #: Store the last known bot positions
-        self._last_know_position = [b.current_pos for b in universe.bots if b.team_index == team_id]
+        self._last_know_position = game_state["bot_positions"][team_id::2]
 
         #: Store a history of bot positions
         self._bot_track = [[], []]
@@ -75,13 +73,13 @@ class Team(AbstractTeam):
         # To make things a little simpler, we also initialise a random generator
         # for all enemy bots
 
-        for bot in universe.bots:
+        for bot_index in [0, 1, 2, 3][team_id::2]:
             # we take the bot’s index as a value for the seed_offset
-            self._bot_random[bot.index] = random.Random(game_state["seed"] + bot.index)
+            self._bot_random[bot_index] = random.Random(game_state["seed"] + bot_index)
 
         return self.team_name
 
-    def get_move(self, bot_id, universe, game_state):
+    def get_move(self, bot_id, game_state):
         """ Requests a move from the Player who controls the Bot with id `bot_id`.
 
         This method returns a dict with a key `move` and a value specifying the direction
@@ -100,12 +98,11 @@ class Team(AbstractTeam):
         -------
         move : dict
         """
-
-        bots = bots_from_universe(universe,
-                                  rng=self._bot_random,
-                                  round=game_state['round_index'],
-                                  team_name=game_state['team_name'],
-                                  timeout_count=game_state['timeout_teams'])
+        bots = bots_from_game_state(game_state,
+                                    rng=self._bot_random,
+                                    round=game_state['round_index'],
+                                    team_name=game_state['team_name'],
+                                    timeout_count=game_state['timeout_teams'])
 
         me = bots[bot_id]
         team = bots[bot_id]._team
@@ -338,6 +335,9 @@ class Bot:
             out.write(str(layout))
             return out.getvalue()
 
+    def __repr__(self):
+        return "Bot"
+
 
 def _rebuild_universe(bots):
     """ Rebuilds a universe from the list of bots.
@@ -418,6 +418,19 @@ def bots_from_universe(universe, rng, round, team_name, timeout_count):
                      initial_positions=[b.initial_pos for b in universe.bots],
                      score=[t.score for t in universe.teams],
                      is_noisy=[b.noisy for b in universe.bots],
+                     rng=rng,
+                     round=round,
+                     team_name=team_name,
+                     timeout_count=timeout_count)
+
+def bots_from_game_state(game_state, rng, round, team_name, timeout_count):
+    """ Creates 4 bots given a game_state. """
+    return make_bots(walls=game_state["walls"],
+                     food=game_state["food"],
+                     positions=game_state["bot_positions"],
+                     initial_positions=game_state["initial_positions"],
+                     score=game_state["team_score"],
+                     is_noisy=[False, False, False, False], # TODO #[b.noisy for b in universe.bots],
                      rng=rng,
                      round=round,
                      team_name=team_name,

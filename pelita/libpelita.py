@@ -358,6 +358,7 @@ def run_game(team_specs, *, rounds, layout, layout_name="", seed=None, dump=Fals
         viewers = []
 
     teams = [prepare_team(team_spec) for team_spec in team_specs]
+    print(teams)
 
     server = SimpleServer(layout_string=layout,
                           rounds=rounds,

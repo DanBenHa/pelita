@@ -54,27 +54,28 @@ class ReplayPublisher:
                 yield self.publisher._send(message)
 
 class ResultPrinter(pelita.viewer.AbstractViewer):
-    def observe(self, universe, game_state):
-        self.print_bad_bot_status(universe, game_state)
+    def observe(self, game_state):
+        self.print_bad_bot_status(game_state)
         if game_state["finished"]:
-            self.print_possible_winner(universe, game_state)
+            self.print_possible_winner(game_state)
 
-    def print_bad_bot_status(self, universe, game_state):
+    def print_bad_bot_status(self, game_state):
         for bot_id, reason in game_state["bot_error"].items():
+            team_index = bot_id % 2
             if reason == "timeout":
                 sys.stderr.write("Timeout #%r for team %r (bot index %r).\n" % (
-                                  game_state["timeout_teams"][universe.bots[bot_id].team_index],
-                                  universe.bots[bot_id].team_index,
+                                  game_state["timeout_teams"][team_index],
+                                  team_index,
                                   bot_id))
             elif reason == "illegal_move":
                 sys.stderr.write("Illegal move -> Timeout #%r for team %r (bot index %r).\n" % (
-                                  game_state["timeout_teams"][universe.bots[bot_id].team_index],
-                                  universe.bots[bot_id].team_index,
+                                  game_state["timeout_teams"][team_index],
+                                  team_index,
                                   bot_id))
 
             else:
                 sys.stderr.write("Problem for team %r (bot index %r) (%s).\n" % (
-                                  universe.bots[bot_id].team_index,
+                                  team_index,
                                   bot_id,
                                   reason))
 
@@ -87,30 +88,26 @@ class ResultPrinter(pelita.viewer.AbstractViewer):
                 sys.stderr.write("Team %r disqualified (%r).\n" % (team_id, reason))
 
 
-    def print_possible_winner(self, universe, game_state):
+    def print_possible_winner(self, game_state):
         """ Checks the event list for a potential winner and prints this information.
 
         This is needed for pelita.scripts parsing the output.
         """
         winning_team = game_state.get("team_wins")
         if winning_team is not None:
-            winner = universe.teams[winning_team]
-            winner_name = game_state["team_name"][winner.index]
-            loser = universe.enemy_team(winning_team)
-            loser_name = game_state["team_name"][loser.index]
+            winner_name = game_state["team_name"][winning_team]
+            loser_name = game_state["team_name"][1 - winning_team]
+            winner_score = game_state["team_score"][winning_team]
+            loser_score = game_state["team_score"][1 - winning_team]
             msg = "Finished. '%s' won over '%s'. (%r:%r)" % (
                     winner_name, loser_name,
                     winner.score, loser.score
                 )
             sys.stdout.flush()
         elif game_state.get("game_draw") is not None:
-            t0 = universe.teams[0]
-            t0_name = game_state["team_name"][t0.index]
-            t1 = universe.teams[1]
-            t1_name = game_state["team_name"][t1.index]
             msg = "Finished. '%s' and '%s' had a draw. (%r:%r)" % (
-                    t0_name, t1_name,
-                    t0.score, t1.score
+                    *game_state["team_name"],
+                    *game_state["team_score"],
                 )
         else:
             return

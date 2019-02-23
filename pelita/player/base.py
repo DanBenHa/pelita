@@ -16,7 +16,7 @@ class AbstractTeam(metaclass=abc.ABCMeta):
     """
 
     @abc.abstractmethod
-    def set_initial(self, team_id, universe, game_state):
+    def set_initial(self, team_id, game_state):
         """ Tells the team about its id and gives initial information
          about the universe and game state.
 
@@ -27,8 +27,6 @@ class AbstractTeam(metaclass=abc.ABCMeta):
         ----------
         team_id : int
             The id of the team
-        universe : Universe
-            The initial universe
         game_state : dict
             The initial game state
 
@@ -39,7 +37,7 @@ class AbstractTeam(metaclass=abc.ABCMeta):
         """
 
     @abc.abstractmethod
-    def get_move(self, bot_id, universe, game_state):
+    def get_move(self, bot_id, game_state):
         """ Requests a move from the bot with id `bot_id`.
 
         This method returns a dict with a key `move` and a value specifying the direction
@@ -49,8 +47,6 @@ class AbstractTeam(metaclass=abc.ABCMeta):
         ----------
         bot_id : int
             The id of the bot who needs to play
-        universe : Universe
-            The initial universe
         game_state : dict
             The initial game state
 
