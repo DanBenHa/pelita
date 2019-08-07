@@ -619,7 +619,6 @@ def apply_move(gamestate, bot_position):
         state of the game after applying current turn
 
     """
-    # TODO is a timeout counted as an error?
     # define local variables
     bots = gamestate["bots"]
     turn = gamestate["turn"]
@@ -635,9 +634,6 @@ def apply_move(gamestate, bot_position):
     deaths = gamestate["deaths"]
     bot_was_killed = gamestate["bot_was_killed"]
     fatal_error = True if gamestate["fatal_errors"][team] else False
-    #TODO how are fatal errors passed to us? dict with same structure as regular errors?
-    #TODO do we need to communicate that fatal error was the reason for game over in any other way?
-
 
     # reset our own bot_was_killed flag
     bot_was_killed[turn] = False
@@ -690,10 +686,12 @@ def apply_move(gamestate, bot_position):
             food[1 - team].remove(bot_position)
             # This is modifying the old game state
             score[team] = score[team] + 1
-    # check if we killed someone
+
+    # check for enemies at the target
+    enemies_on_target = [idx for idx in enemy_idx if bots[idx] == bot_position]
     if bot_in_homezone:
-        killed_enemies = [idx for idx in enemy_idx if bot_position == bots[idx]]
-        for enemy_idx in killed_enemies:
+        # check if we killed someone
+        for enemy_idx in enemies_on_target:
             _logger.info(f"Bot {turn} eats enemy bot {enemy_idx} at {bot_position}.")
             score[team] = score[team] + KILL_POINTS
             init_positions = initial_positions(walls)
@@ -704,7 +702,6 @@ def apply_move(gamestate, bot_position):
             _logger.info(f"Bot {enemy_idx} reappears at {bots[enemy_idx]}.")
     else:
         # check if we have been eaten
-        enemies_on_target = [idx for idx in enemy_idx if bots[idx] == bot_position]
         if len(enemies_on_target) > 0:
             _logger.info(f"Bot {turn} was eaten by bots {enemies_on_target} at {bot_position}.")
             score[1 - team] = score[1 - team] + KILL_POINTS
@@ -717,7 +714,11 @@ def apply_move(gamestate, bot_position):
 
     errors = gamestate["errors"]
     errors[team] = team_errors
-    gamestate_new = {
+
+    # we return a new gamestate dict
+    gamestate_new = {}
+    gamestate_new.update(gamestate)
+    gamestate_new.update({
         "food": food,
         "bots": bots,
         "score": score,
@@ -725,10 +726,9 @@ def apply_move(gamestate, bot_position):
         "kills": kills,
         "bot_was_killed": bot_was_killed,
         "errors": errors,
-        }
+        })
 
-    gamestate.update(gamestate_new)
-    return gamestate
+    return gamestate_new
 
 
 def next_round_turn(game_state):
